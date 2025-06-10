@@ -2,15 +2,13 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const dotenv = require("dotenv");
 const jwt = require("jsonwebtoken");
+const axios = require("axios");
 
-const {
-  fetchStudents,
-  fetchProfessors,
-} = require("./util");
 const { ROLES } = require("../../../consts");
 
-const router = express.Router();
 dotenv.config();
+
+const router = express.Router();
 
 // JWT Generator
 function generateJWT(payload) {
@@ -24,9 +22,10 @@ function generateJWT(payload) {
     expiresIn: "1h",
   });
 }
+
 // Professor Login
 router.post("/professor", async (req, res) => {
-  console.log("BODY RECEIVED:", req.body);
+  console.log("[authService] BODY RECEIVED:", req.body);
   const { email, password } = req.body;
 
   if (!email || !password) {
@@ -34,13 +33,17 @@ router.post("/professor", async (req, res) => {
   }
 
   try {
-    const professors = await fetchProfessors();
-    const professor = professors.find((p) => p.email === email);
+    // Call professor service login-data route to get professor with password
+    const response = await axios.get(`${process.env.PROFESSOR_SERVICE_URL}/login-data`, {
+      params: { email },
+    });
 
-    console.log("Professor found:", professor);
+    const professor = response.data;
+    console.log("[authService] Professor found:", professor);
 
-    if (!professor) {
-      return res.status(401).json({ message: "Invalid credentials" });
+    if (!professor.password) {
+      console.error("[authService] Missing password for professor in data");
+      return res.status(500).json({ message: "Password not set for this user" });
     }
 
     const isMatch = await bcrypt.compare(password, professor.password);
@@ -50,21 +53,23 @@ router.post("/professor", async (req, res) => {
     }
 
     const token = generateJWT({
-      id: professor.id,
+      id: professor._id || professor.id,
       role: ROLES.PROFESSOR,
       email: professor.email,
     });
 
     return res.status(200).json({ token });
   } catch (err) {
-    console.error("ERROR in /professor login:", err);
+    if (err.response && err.response.status === 404) {
+      // Professor not found
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+    console.error("[authService] ERROR in /professor login:", err.message);
     return res.status(500).json({ message: "Internal server error" });
   }
 });
 
-
-
-// Student Login
+// Student Login (unchanged)
 router.post("/student", async (req, res) => {
   const { email, password } = req.body;
 
@@ -72,26 +77,32 @@ router.post("/student", async (req, res) => {
     return res.status(400).json({ message: "Email and password are required" });
   }
 
-  const students = await fetchStudents();  // Assumed to be from a util file
-  const student = students.find((s) => s.email === email);
+  try {
+    const { fetchStudents } = require("./util"); // Assuming fetchStudents still returns list with passwords
+    const students = await fetchStudents();
+    const student = students.find((s) => s.email === email);
 
-  if (!student) {
-    return res.status(401).json({ message: "Invalid credentials" });
+    if (!student) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    const isMatch = await bcrypt.compare(password, student.password);
+
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    const token = generateJWT({
+      id: student._id || student.id,
+      role: ROLES.STUDENT,
+      email: student.email,
+    });
+
+    return res.status(200).json({ token });
+  } catch (error) {
+    console.error("[authService] ERROR in /student login:", error.message);
+    return res.status(500).json({ message: "Internal server error" });
   }
-
-  const isMatch = await bcrypt.compare(password, student.password);
-
-  if (!isMatch) {
-    return res.status(401).json({ message: "Invalid credentials" });
-  }
-
-  const token = generateJWT({
-    id: student.id,
-    role: ROLES.STUDENT,
-    email: student.email,
-  });
-
-  return res.status(200).json({ token });
 });
 
 module.exports = router;

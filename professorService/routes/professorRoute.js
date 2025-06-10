@@ -9,12 +9,10 @@ router.post("/", async (req, res) => {
   try {
     const { name, email, phone, password } = req.body;
 
-    // Ensure all fields are provided
     if (!name || !email || !phone || !password) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
-    // Check for duplicate email or phone
     const existingProfessor = await Professor.findOne({
       $or: [{ email }, { phone }],
     });
@@ -22,13 +20,34 @@ router.post("/", async (req, res) => {
       return res.status(409).json({ message: "Email or phone already exists" });
     }
 
-    // Create and save the professor
-    const professor = new Professor({ name, email, phone, password });
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const professor = new Professor({ name, email, phone, password: hashedPassword });
     await professor.save();
 
-    res
-      .status(201)
-      .json({ message: "Professor created successfully", professor });
+    res.status(201).json({ message: "Professor created successfully", professor });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server Error", error: error.message });
+  }
+});
+
+// ✅ Login-data route placed BEFORE /:id route
+router.get("/login-data", async (req, res) => {
+  const { email } = req.query;
+
+  if (!email) {
+    return res.status(400).json({ message: "Email is required" });
+  }
+
+  try {
+    const professor = await Professor.findOne({ email }).select("+password");
+    if (!professor) {
+      return res.status(404).json({ message: "Professor not found" });
+    }
+
+    res.status(200).json(professor);
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server Error", error: error.message });
@@ -38,7 +57,7 @@ router.post("/", async (req, res) => {
 // Get all professors
 router.get("/", async (req, res) => {
   try {
-    const professors = await Professor.find().select("-password"); // Exclude password
+    const professors = await Professor.find().select("-password");
     return res.status(200).json(professors);
   } catch (error) {
     console.error(error);
@@ -49,9 +68,7 @@ router.get("/", async (req, res) => {
 // Get a specific professor by ID
 router.get("/:id", async (req, res) => {
   try {
-    const professor = await Professor.findById(req.params.id).select(
-      "-password"
-    );
+    const professor = await Professor.findById(req.params.id).select("-password");
 
     if (!professor) {
       return res.status(404).json({ message: "Professor not found" });
@@ -78,21 +95,13 @@ router.put("/:id", async (req, res) => {
       updatedData.password = await bcrypt.hash(password, salt);
     }
 
-    const professor = await Professor.findByIdAndUpdate(
-      req.params.id,
-      updatedData,
-      {
-        new: true,
-      }
-    );
+    const professor = await Professor.findByIdAndUpdate(req.params.id, updatedData, { new: true });
 
     if (!professor) {
       return res.status(404).json({ message: "Professor not found" });
     }
 
-    res
-      .status(200)
-      .json({ message: "Professor updated successfully", professor });
+    res.status(200).json({ message: "Professor updated successfully", professor });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server Error", error: error.message });
@@ -108,9 +117,7 @@ router.delete("/:id", async (req, res) => {
       return res.status(404).json({ message: "Professor not found" });
     }
 
-    res
-      .status(200)
-      .json({ message: "Professor deleted successfully", professor });
+    res.status(200).json({ message: "Professor deleted successfully", professor });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Server Error", error: error.message });
